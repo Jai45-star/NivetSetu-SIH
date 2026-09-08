@@ -10,6 +10,8 @@
     "lint": "node --check src/app.js && node --check src/server.js"
   },
   "dependencies": {
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "mongoose": "^9.9.5",
+    "multer": "^2.3.0"
   }
 }

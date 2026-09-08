@@ -6,3 +6,6 @@ dist/
 test-results/
 playwright-report/
 *.log
+.vs/
+backend/uploads/*
+!backend/uploads/.gitkeep
