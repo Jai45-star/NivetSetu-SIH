@@ -1,0 +1,1 @@
+export function PageHeader({ eyebrow, title, description, action }) { return <div className="page-header"><div>{eyebrow && <p className="page-eyebrow">{eyebrow}</p>}<h1 tabIndex={-1} id="page-title">{title}</h1>{description && <p>{description}</p>}</div>{action}</div>; }

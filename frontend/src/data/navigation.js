@@ -1,0 +1,5 @@
+import { LayoutDashboard, Files, FilePlus2, FolderOpen, Bell, MessagesSquare, CircleHelp, ClipboardList, Timer, ChartNoAxesCombined } from 'lucide-react';
+export const navigation = {
+ entrepreneur: [ { title: 'Dashboard', path: '', icon: LayoutDashboard }, { title: 'My Applications', path: 'applications', icon: Files }, { title: 'New Application', path: 'applications/new', icon: FilePlus2 }, { title: 'Document Repository', path: 'documents', icon: FolderOpen }, { title: 'Notifications', path: 'notifications', icon: Bell }, { title: 'Regulatory Assistant', path: 'assistant', icon: MessagesSquare }, { title: 'Help & Support', path: 'help', icon: CircleHelp } ],
+ officer: [ { title: 'Dashboard', path: '', icon: LayoutDashboard }, { title: 'Applications', path: 'applications', icon: Files }, { title: 'Review Queue', path: 'review', icon: ClipboardList }, { title: 'SLA Monitoring', path: 'sla', icon: Timer }, { title: 'Reports', path: 'reports', icon: ChartNoAxesCombined }, { title: 'Help & Support', path: 'help', icon: CircleHelp } ],
+};
