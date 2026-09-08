@@ -1,6 +1,7 @@
 import { ApplicationService } from '../services/applicationService.js';
 import { StorageService } from '../services/storageService.js';
 import path from 'node:path';
+import { validateApplication } from '../services/applicationValidationService.js';
 
 export async function listApplications(req, res, next) {
   try {
@@ -88,12 +89,14 @@ export async function generateApprovals(req, res, next) {
 }
 
 export async function uploadDocument(req, res, next) {
+  let attached = false;
   try {
     const { id } = req.params;
     const documentId = req.body.documentId;
     const file = req.file;
 
     if (!documentId) {
+      if (file) StorageService.deleteFile(file.filename);
       return res.status(400).json({
         success: false,
         message: 'documentId field is required in form-data',
@@ -113,8 +116,10 @@ export async function uploadDocument(req, res, next) {
       mimeType: file.mimetype,
       size: file.size,
     };
-
-    const updated = await ApplicationService.attachDocument(id, documentId, fileData);
+    try { StorageService.validateFile(file); } catch (error) { error.status = 400; throw error; }
+    await ApplicationService.attachDocument(id, documentId, fileData);
+    attached = true;
+    const updated = await validateApplication(id);
 
     res.json({
       success: true,
@@ -122,6 +127,7 @@ export async function uploadDocument(req, res, next) {
       data: updated,
     });
   } catch (error) {
+    if (!attached && req.file) StorageService.deleteFile(req.file.filename);
     next(error);
   }
 }
@@ -129,7 +135,8 @@ export async function uploadDocument(req, res, next) {
 export async function removeDocument(req, res, next) {
   try {
     const { id, documentId } = req.params;
-    const updated = await ApplicationService.removeDocument(id, documentId);
+    await ApplicationService.removeDocument(id, documentId);
+    const updated = await validateApplication(id);
     res.json({
       success: true,
       message: 'Document removed successfully',
@@ -183,7 +190,9 @@ export async function downloadDocumentFile(req, res, next) {
     res.sendFile(filePath, {
       headers: {
         'Content-Type': doc.mimeType || 'application/octet-stream',
-        'Content-Disposition': `inline; filename="${doc.originalName || path.basename(filePath)}"`,
+        'Content-Disposition': `inline; filename="${StorageService.sanitizeFilename(doc.originalName || path.basename(filePath))}"`,
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'no-store',
       },
     });
   } catch (error) {

@@ -6,6 +6,8 @@ const STATUS_CONFIG = {
   submitted: { label: 'Submitted', tone: 'primary' },
   under_review: { label: 'Under Review', tone: 'primary' },
   approved: { label: 'Approved', tone: 'success' },
+  rejected: { label: 'Rejected', tone: 'danger' },
+  action_required: { label: 'Action Required', tone: 'warning' },
   at_risk: { label: 'SLA Risk', tone: 'danger' },
 };
 

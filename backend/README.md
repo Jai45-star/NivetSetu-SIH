@@ -1,13 +1,29 @@
-# NiveshSetu API
+# NiveshSetu API - Phase 3
 
-Phase 1 Express foundation. Requires Node 22.12+ (tested on Node 24).
+## Commands
 
-Run `npm ci`, then `npm run dev` or `npm start`. Defaults to port 4000; use the `PORT` environment variable to change it. To load a local `.env`, run `node --env-file=.env src/server.js`.
+- `npm ci`
+- `npm start` or `npm run dev` (loads optional `.env`)
+- `npm test`
+- `npm run lint`
+- `npm run fixtures:demo`
+- `npm run seed:demo` (requires a running local API)
 
-`GET /api/health` returns `{ "success": true, "service": "NiveshSetu API", "status": "healthy" }`.
+Set `PORT` (default 4000) and optionally `MONGODB_URI`. Without MongoDB, records live only in the API process memory. Uploads are stored under `uploads/`; no static upload directory is exposed. Files are served through the existing application/document API. Authentication remains demo-only and must be implemented before use with real sensitive records.
 
-`npm test` checks the response contract and 404 behavior. `npm run lint` checks the entrypoint syntax.
+## Validation API
 
-Structure: config handles environment validation; routes map HTTP paths; controllers return responses; middleware handles unknown routes and errors; app.js composes Express; server.js owns startup and shutdown. Models and services should be added with the first actual business feature, not empty scaffolding.
+- `POST /api/applications/:id/validate` - full report; optional JSON `{ "force": true }` re-extracts every document.
+- `GET /api/applications/:id/validation` - saved report and staleness indicator; does not run OCR.
+- `POST /api/applications/:id/documents/:documentId/validate` - re-extracts the selected file and refreshes all checks using cached fields elsewhere.
+- `POST /api/applications/:id/submit` - gated, idempotent prototype submission.
 
-No database connection, authentication, application submission, government integration, OCR, AI, or business logic is included. The frontend demo does not call this API.
+Existing profile/checklist/upload/delete APIs remain. Upload and deletion refresh validation. Changes clear application readiness first; replacement clears document extraction and validation before checking the new file. All errors/warnings/manual-review items must be resolved for prototype submission. No override or officer review action exists in this phase.
+
+## Modules
+
+ApplicationService manages drafts, persistence, per-application mutation exclusion, MongoDB optimistic version checks and submission. ApplicationValidationService orchestrates document checks, consistency and report creation. DocumentValidationService handles file validation and specific validators. DocumentExtractionService starts a bounded child process for PDFParse or Tesseract. FieldExtractionService uses explicit labels and regex. ReadinessService owns the 40/40/20 formula. Text/date utilities centralize normalization and parsing.
+
+Extraction accepts at most 10 MB, 30 PDF pages and 120,000 characters. Two extraction processes may run concurrently; a saturated extractor gives a manual-review result that can be retried. Each worker is terminated after 20 seconds. English OCR data is installed locally; no runtime OCR download or LLM call is required. Document text is never stored in MongoDB; only field values, confidence categories, a cache fingerprint and useful report metadata persist.
+
+See `../docs/PHASE-3.md` for detailed validation scope and the repeatable SIH demo.

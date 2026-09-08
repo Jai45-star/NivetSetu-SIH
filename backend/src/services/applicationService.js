@@ -1,467 +1,165 @@
+import { randomBytes } from 'node:crypto';
 import { Application } from '../models/Application.js';
 import { isDbConnected } from '../config/db.js';
 import { ApprovalRuleService } from './approvalRuleService.js';
 import { StorageService } from './storageService.js';
+import { httpError, utcDay, VALIDATION_VERSION } from '../utils/validationHelpers.js';
+import { calculateValidationReadiness } from './readinessService.js';
+import { initializeWorkflow } from './workflowState.js';
+import { governmentAdapter } from '../integrations/mockGovernmentAdapter.js';
 
-// In-memory fallback store when MongoDB is not connected
 const inMemoryStore = new Map();
-
-// Helper to calculate deterministic readiness score
+const locks = new Set();
+let seedPromise;
+const profileFields = ['industryType', 'location', 'investmentRange', 'employeeRange', 'businessStage', 'description'];
 export function calculateReadiness(documents = []) {
-  if (!documents.length) return 0;
-  const uploaded = documents.filter(d => d.status === 'uploaded' || d.status === 'valid').length;
-  return Math.round((uploaded / documents.length) * 100);
+  return documents.length ? Math.round(100 * documents.filter(d => d.storedName).length / documents.length) : 0;
 }
-
-// Initial demo showcase seed data
-export const SHOWCASE_SEEDS = [
-  {
-    applicationId: 'NS-DEMO-001',
-    userId: 'demo-entrepreneur-001',
-    unitName: 'Food Processing Unit',
-    businessProfile: {
-      industryType: 'Food Processing',
-      location: 'Pune, Maharashtra',
-      investmentRange: '₹1 – ₹5 Crore',
-      employeeRange: '50 – 200',
-      businessStage: 'New Unit',
-      description: 'Manufacturing of packaged organic fruit snacks and cold-pressed juices.',
-    },
-    status: 'draft',
-    currentStep: 3,
-    createdAt: new Date('2026-08-12T09:30:00Z'),
-    updatedAt: new Date('2026-08-12T11:45:00Z'),
-  },
-  {
-    applicationId: 'NS-DEMO-002',
-    userId: 'demo-entrepreneur-001',
-    unitName: 'Textile Manufacturing Unit',
-    businessProfile: {
-      industryType: 'Textile Manufacturing',
-      location: 'Pune, Maharashtra',
-      investmentRange: '₹5 – ₹25 Crore',
-      employeeRange: '201 – 500',
-      businessStage: 'Expansion',
-      description: 'High-speed synthetic yarn spinning and automated weaving facility.',
-    },
-    status: 'under_review',
-    currentStep: 4,
-    createdAt: new Date('2026-08-05T08:00:00Z'),
-    updatedAt: new Date('2026-08-06T14:20:00Z'),
-  },
-  {
-    applicationId: 'NS-DEMO-003',
-    userId: 'demo-entrepreneur-001',
-    unitName: 'Chemical Unit',
-    businessProfile: {
-      industryType: 'Chemical Manufacturing',
-      location: 'Thane, Maharashtra',
-      investmentRange: '₹25 – ₹100 Crore',
-      employeeRange: '50 – 200',
-      businessStage: 'Existing Unit',
-      description: 'Speciality intermediate polymer production facility in MIDC industrial belt.',
-    },
-    status: 'at_risk',
-    currentStep: 4,
-    createdAt: new Date('2026-07-28T10:15:00Z'),
-    updatedAt: new Date('2026-08-01T16:00:00Z'),
-  },
-];
-
-let isSeeded = false;
-
+function unvalidated(documents) {
+  return { documents, validationReport: null, validatedAt: null, validationStatus: 'not_validated',
+    readinessScore: 0, readinessLabel: 'Not Ready', completenessScore: calculateReadiness(documents) };
+}
 export async function ensureSeedData() {
-  if (isSeeded) return;
-
-  for (const seed of SHOWCASE_SEEDS) {
-    const { approvals, requiredDocuments } = ApprovalRuleService.generateApprovalsForProfile(seed.businessProfile);
-    
-    // Simulate some documents for showcase display
-    const documents = requiredDocuments.map((doc, idx) => {
-      if (seed.status === 'draft' && idx === 0) {
-        return {
-          ...doc,
-          status: 'uploaded',
-          originalName: 'entity_pan_card.pdf',
-          storedName: 'demo-pan.pdf',
-          mimeType: 'application/pdf',
-          size: 1024 * 340,
-          uploadedAt: new Date('2026-08-12T10:15:00Z'),
-        };
-      }
-      if (seed.status === 'under_review' || seed.status === 'at_risk') {
-        return {
-          ...doc,
-          status: 'uploaded',
-          originalName: `${doc.documentId}_verified.pdf`,
-          storedName: `demo-${doc.documentId}.pdf`,
-          mimeType: 'application/pdf',
-          size: 1024 * 450,
-          uploadedAt: new Date('2026-08-05T12:00:00Z'),
-        };
-      }
-      return doc;
-    });
-
-    const readinessScore = calculateReadiness(documents);
-
-    const fullRecord = {
-      ...seed,
-      requiredApprovals: approvals,
-      documents,
-      readinessScore,
-    };
-
-    // Store in inMemoryStore
-    inMemoryStore.set(seed.applicationId, fullRecord);
-
-    // If MongoDB is connected, also upsert to Mongoose
-    if (isDbConnected()) {
-      try {
-        await Application.findOneAndUpdate(
-          { applicationId: seed.applicationId },
-          { $set: fullRecord },
-          { upsert: true, new: true }
-        );
-      } catch (err) {
-        console.warn(`[ApplicationService] Seed failed for ${seed.applicationId}:`, err.message);
-      }
+  if (seedPromise) return seedPromise;
+  seedPromise = (async () => {
+    if (process.env.NODE_ENV === 'production' || process.env.SEED_DEMO === 'false') return;
+    const { SHOWCASE_SEEDS } = await import('../../fixtures/phase2Seeds.js');
+    for (const seed of SHOWCASE_SEEDS) {
+      const { approvals, requiredDocuments } = ApprovalRuleService.generateApprovalsForProfile(seed.businessProfile);
+      const record = { ...seed, requiredApprovals: approvals, ...unvalidated(requiredDocuments) };
+      if (isDbConnected()) await Application.updateOne({ applicationId: seed.applicationId }, { $setOnInsert: record }, { upsert: true, timestamps: false });
+      else inMemoryStore.set(seed.applicationId, record);
     }
-  }
-
-  isSeeded = true;
+  })();
+  return seedPromise;
 }
-
 export class ApplicationService {
+  static async listAllApplications() {
+    await ensureSeedData();
+    if (isDbConnected()) return Application.find({}).sort({ updatedAt: -1 }).lean();
+    return structuredClone([...inMemoryStore.values()]);
+  }
   static async listApplications(userId = 'demo-entrepreneur-001', filterStatus = null) {
     await ensureSeedData();
-
-    let list = [];
-    if (isDbConnected()) {
-      const query = { userId };
-      if (filterStatus && filterStatus !== 'all') {
-        query.status = filterStatus;
-      }
-      list = await Application.find(query).sort({ updatedAt: -1 }).lean();
-    } else {
-      list = Array.from(inMemoryStore.values())
-        .filter(app => app.userId === userId)
-        .filter(app => {
-          if (!filterStatus || filterStatus === 'all') return true;
-          return app.status === filterStatus;
-        })
-        .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
-    }
-
-    return list;
+    if (isDbConnected()) return Application.find({ userId, ...(filterStatus && filterStatus !== 'all' ? { status: filterStatus } : {}) }).sort({ updatedAt: -1 }).lean();
+    return structuredClone([...inMemoryStore.values()].filter(a => a.userId === userId && (!filterStatus || filterStatus === 'all' || a.status === filterStatus)).sort((a,b) => new Date(b.updatedAt) - new Date(a.updatedAt)));
   }
-
   static async getApplicationById(id) {
     await ensureSeedData();
-
-    if (isDbConnected()) {
-      let doc = await Application.findOne({ applicationId: id }).lean();
-      if (!doc && id.match(/^[0-9a-fA-F]{24}$/)) {
-        doc = await Application.findById(id).lean();
-      }
-      if (doc) return doc;
-    }
-
-    // Check memory store
-    if (inMemoryStore.has(id)) {
-      return inMemoryStore.get(id);
-    }
-    for (const app of inMemoryStore.values()) {
-      if (app.applicationId === id || app._id === id) {
-        return app;
-      }
-    }
-
-    return null;
+    if (isDbConnected()) return Application.findOne({ applicationId: id }).lean();
+    return structuredClone(inMemoryStore.get(id) || null);
   }
-
+  static async requireApplication(id) {
+    const app = await this.getApplicationById(id);
+    if (!app) throw httpError(404, 'Application not found');
+    return app;
+  }
+  static assertEditable(app) {
+    if (!['draft', 'ready_for_validation'].includes(app.status)) throw httpError(409, 'Submitted applications cannot be changed. Start a new draft.');
+  }
+  static async withLock(id, action) {
+    if (locks.has(id)) throw httpError(409, 'This application is being updated. Please retry when the current check finishes.');
+    locks.add(id);
+    try { return await action(); } finally { locks.delete(id); }
+  }
+  static async save(app, patch) {
+    const { __v, ...safePatch } = patch;
+    const update = { ...safePatch, updatedAt: new Date() };
+    if (isDbConnected()) {
+      const result = await Application.findOneAndUpdate(
+        { applicationId: app.applicationId, __v: app.__v ?? 0 },
+        { $set: update, $inc: { __v: 1 } },
+        { returnDocument: 'after', runValidators: true }
+      ).lean();
+      if (!result) throw httpError(409, 'Application changed. Refresh and retry.');
+      return result;
+    }
+    const current = inMemoryStore.get(app.applicationId);
+    if ((current?.__v ?? 0) !== (app.__v ?? 0)) throw httpError(409, 'Application changed. Refresh and retry.');
+    const updated = { ...app, ...update, __v: (app.__v ?? 0) + 1 };
+    inMemoryStore.set(app.applicationId, structuredClone(updated));
+    return structuredClone(updated);
+  }
   static async createDraft(userId = 'demo-entrepreneur-001', initialData = {}) {
     await ensureSeedData();
-
-    const randomSuffix = Math.floor(10000 + Math.random() * 90000);
-    const applicationId = `NS-2026-${randomSuffix}`;
-
-    const newApp = {
-      applicationId,
-      userId,
-      unitName: initialData.unitName || 'New Industrial Unit',
-      businessProfile: {
-        industryType: initialData.businessProfile?.industryType || '',
-        location: initialData.businessProfile?.location || '',
-        investmentRange: initialData.businessProfile?.investmentRange || '',
-        employeeRange: initialData.businessProfile?.employeeRange || '',
-        businessStage: initialData.businessProfile?.businessStage || '',
-        description: initialData.businessProfile?.description || '',
-      },
-      requiredApprovals: [],
-      documents: [],
-      status: 'draft',
-      currentStep: 1,
-      readinessScore: 0,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    // If initial business profile has an industry, generate checklist immediately
-    if (newApp.businessProfile.industryType) {
-      const { approvals, requiredDocuments } = ApprovalRuleService.generateApprovalsForProfile(newApp.businessProfile);
-      newApp.requiredApprovals = approvals;
-      newApp.documents = requiredDocuments;
-    }
-
-    if (isDbConnected()) {
-      const created = await Application.create(newApp);
-      inMemoryStore.set(applicationId, created.toObject());
-      return created.toObject();
-    }
-
-    inMemoryStore.set(applicationId, newApp);
-    return newApp;
+    const applicationId = `NS-${new Date().getFullYear()}-${randomBytes(6).toString('hex').toUpperCase()}`;
+    const businessProfile = Object.fromEntries(profileFields.map(key => [key, typeof initialData.businessProfile?.[key] === 'string' ? initialData.businessProfile[key].slice(0, 2000) : '']));
+    const checklist = businessProfile.industryType ? ApprovalRuleService.generateApprovalsForProfile(businessProfile) : { approvals: [], requiredDocuments: [] };
+    const app = { applicationId, userId, unitName: String(initialData.unitName || 'New Industrial Unit').slice(0, 150), businessProfile,
+      requiredApprovals: checklist.approvals, ...unvalidated(checklist.requiredDocuments), status: 'draft', currentStep: 1, createdAt: new Date(), updatedAt: new Date(), __v: 0 };
+    if (isDbConnected()) return (await Application.create(app)).toObject();
+    inMemoryStore.set(applicationId, structuredClone(app));
+    return app;
   }
-
   static async updateBusinessProfile(id, profile) {
-    const app = await this.getApplicationById(id);
-    if (!app) {
-      throw new Error(`Application ${id} not found`);
-    }
-
-    const updatedProfile = {
-      ...app.businessProfile,
-      ...profile,
-    };
-
-    // Formulate a clean unit name if still default
-    let unitName = app.unitName;
-    if (unitName === 'New Industrial Unit' && updatedProfile.industryType) {
-      unitName = `${updatedProfile.industryType} Unit`;
-    }
-
-    // Generate checklist based on updated profile
-    const { approvals, requiredDocuments } = ApprovalRuleService.generateApprovalsForProfile(updatedProfile);
-
-    // Preserve already uploaded documents if documentId matches
-    const existingDocsMap = new Map((app.documents || []).map(d => [d.documentId, d]));
-    const mergedDocuments = requiredDocuments.map(reqDoc => {
-      const existing = existingDocsMap.get(reqDoc.documentId);
-      if (existing && existing.status === 'uploaded') {
-        return {
-          ...reqDoc,
-          status: 'uploaded',
-          originalName: existing.originalName,
-          storedName: existing.storedName,
-          mimeType: existing.mimeType,
-          size: existing.size,
-          uploadedAt: existing.uploadedAt,
-        };
+    return this.withLock(id, async () => {
+      const app = await this.requireApplication(id); this.assertEditable(app);
+      const businessProfile = { ...app.businessProfile };
+      for (const key of profileFields) if (key in profile) {
+        if (typeof profile[key] !== 'string' || profile[key].length > 2000) throw httpError(400, 'Invalid business profile field');
+        businessProfile[key] = profile[key].trim();
       }
-      return reqDoc;
+      const { approvals, requiredDocuments } = ApprovalRuleService.generateApprovalsForProfile(businessProfile);
+      const documents = requiredDocuments.map(req => {
+        const existing = app.documents.find(d => d.documentId === req.documentId);
+        return existing?.storedName ? { ...existing, ...req, status: 'uploaded', originalName: existing.originalName, storedName: existing.storedName,
+          uploadedAt: existing.uploadedAt, validation: null } : req;
+      });
+      const result = await this.save(app, { businessProfile, requiredApprovals: approvals, ...unvalidated(documents), status: 'draft', currentStep: 2,
+        unitName: app.unitName === 'New Industrial Unit' ? `${businessProfile.industryType} Unit` : app.unitName });
+      for (const old of app.documents) if (old.storedName && !documents.some(d => d.storedName === old.storedName)) StorageService.deleteFile(old.storedName);
+      return result;
     });
-
-    const readinessScore = calculateReadiness(mergedDocuments);
-
-    const patch = {
-      unitName,
-      businessProfile: updatedProfile,
-      requiredApprovals: approvals,
-      documents: mergedDocuments,
-      readinessScore,
-      currentStep: Math.max(app.currentStep || 1, 2),
-      updatedAt: new Date(),
-    };
-
-    if (isDbConnected()) {
-      const updated = await Application.findOneAndUpdate(
-        { applicationId: app.applicationId },
-        { $set: patch },
-        { new: true }
-      ).lean();
-      inMemoryStore.set(app.applicationId, updated);
-      return updated;
-    }
-
-    const updated = { ...app, ...patch };
-    inMemoryStore.set(app.applicationId, updated);
-    return updated;
   }
-
   static async generateApprovals(id) {
-    const app = await this.getApplicationById(id);
-    if (!app) {
-      throw new Error(`Application ${id} not found`);
-    }
-
-    const { approvals, requiredDocuments } = ApprovalRuleService.generateApprovalsForProfile(app.businessProfile);
-
-    // Preserve existing uploaded files
-    const existingDocsMap = new Map((app.documents || []).map(d => [d.documentId, d]));
-    const mergedDocuments = requiredDocuments.map(reqDoc => {
-      const existing = existingDocsMap.get(reqDoc.documentId);
-      if (existing && existing.status === 'uploaded') {
-        return {
-          ...reqDoc,
-          status: 'uploaded',
-          originalName: existing.originalName,
-          storedName: existing.storedName,
-          mimeType: existing.mimeType,
-          size: existing.size,
-          uploadedAt: existing.uploadedAt,
-        };
-      }
-      return reqDoc;
-    });
-
-    const readinessScore = calculateReadiness(mergedDocuments);
-
-    const patch = {
-      requiredApprovals: approvals,
-      documents: mergedDocuments,
-      readinessScore,
-      updatedAt: new Date(),
-    };
-
-    if (isDbConnected()) {
-      const updated = await Application.findOneAndUpdate(
-        { applicationId: app.applicationId },
-        { $set: patch },
-        { new: true }
-      ).lean();
-      inMemoryStore.set(app.applicationId, updated);
-      return updated;
-    }
-
-    const updated = { ...app, ...patch };
-    inMemoryStore.set(app.applicationId, updated);
-    return updated;
+    const app = await this.requireApplication(id);
+    return this.updateBusinessProfile(id, app.businessProfile);
   }
-
   static async attachDocument(id, documentId, fileData) {
-    const app = await this.getApplicationById(id);
-    if (!app) {
-      throw new Error(`Application ${id} not found`);
-    }
-
-    const documents = (app.documents || []).map(doc => {
-      if (doc.documentId === documentId) {
-        // Delete older stored file if it existed
-        if (doc.storedName && doc.storedName !== fileData.storedName) {
-          StorageService.deleteFile(doc.storedName);
-        }
-        return {
-          ...doc,
-          status: 'uploaded',
-          originalName: fileData.originalName,
-          storedName: fileData.storedName,
-          mimeType: fileData.mimeType,
-          size: fileData.size,
-          uploadedAt: new Date(),
-        };
-      }
-      return doc;
+    return this.withLock(id, async () => {
+      const app = await this.requireApplication(id); this.assertEditable(app);
+      const old = app.documents.find(d => d.documentId === documentId);
+      if (!old) throw httpError(404, 'Document requirement not found');
+      const documents = app.documents.map(d => d.documentId === documentId ? { ...d, ...fileData, status: 'uploaded', uploadedAt: new Date(), extraction: null, validation: null } : d);
+      const result = await this.save(app, { ...unvalidated(documents), status: calculateReadiness(documents) === 100 ? 'ready_for_validation' : 'draft' });
+      if (old.storedName && old.storedName !== fileData.storedName) StorageService.deleteFile(old.storedName);
+      return result;
     });
-
-    const readinessScore = calculateReadiness(documents);
-    const status = readinessScore === 100 ? 'ready_for_validation' : app.status;
-
-    const patch = {
-      documents,
-      readinessScore,
-      status,
-      updatedAt: new Date(),
-    };
-
-    if (isDbConnected()) {
-      const updated = await Application.findOneAndUpdate(
-        { applicationId: app.applicationId },
-        { $set: patch },
-        { new: true }
-      ).lean();
-      inMemoryStore.set(app.applicationId, updated);
-      return updated;
-    }
-
-    const updated = { ...app, ...patch };
-    inMemoryStore.set(app.applicationId, updated);
-    return updated;
   }
-
   static async removeDocument(id, documentId) {
-    const app = await this.getApplicationById(id);
-    if (!app) {
-      throw new Error(`Application ${id} not found`);
-    }
-
-    const documents = (app.documents || []).map(doc => {
-      if (doc.documentId === documentId) {
-        if (doc.storedName) {
-          StorageService.deleteFile(doc.storedName);
-        }
-        return {
-          ...doc,
-          status: 'missing',
-          originalName: null,
-          storedName: null,
-          mimeType: null,
-          size: null,
-          uploadedAt: null,
-        };
-      }
-      return doc;
+    return this.withLock(id, async () => {
+      const app = await this.requireApplication(id); this.assertEditable(app);
+      const old = app.documents.find(d => d.documentId === documentId);
+      if (!old) throw httpError(404, 'Document requirement not found');
+      const documents = app.documents.map(d => d.documentId === documentId ? { ...d, status: 'missing', originalName: null, storedName: null, mimeType: null, size: null, uploadedAt: null, extraction: null, validation: null } : d);
+      const result = await this.save(app, { ...unvalidated(documents), status: 'draft' });
+      if (old.storedName) StorageService.deleteFile(old.storedName);
+      return result;
     });
-
-    const readinessScore = calculateReadiness(documents);
-    const status = app.status === 'ready_for_validation' ? 'draft' : app.status;
-
-    const patch = {
-      documents,
-      readinessScore,
-      status,
-      updatedAt: new Date(),
-    };
-
-    if (isDbConnected()) {
-      const updated = await Application.findOneAndUpdate(
-        { applicationId: app.applicationId },
-        { $set: patch },
-        { new: true }
-      ).lean();
-      inMemoryStore.set(app.applicationId, updated);
-      return updated;
-    }
-
-    const updated = { ...app, ...patch };
-    inMemoryStore.set(app.applicationId, updated);
-    return updated;
   }
-
   static async updateCurrentStep(id, step) {
-    const app = await this.getApplicationById(id);
-    if (!app) {
-      throw new Error(`Application ${id} not found`);
-    }
-
-    const validatedStep = Math.min(Math.max(Number(step) || 1, 1), 4);
-    const patch = {
-      currentStep: validatedStep,
-      updatedAt: new Date(),
-    };
-
-    if (isDbConnected()) {
-      const updated = await Application.findOneAndUpdate(
-        { applicationId: app.applicationId },
-        { $set: patch },
-        { new: true }
-      ).lean();
-      inMemoryStore.set(app.applicationId, updated);
-      return updated;
-    }
-
-    const updated = { ...app, ...patch };
-    inMemoryStore.set(app.applicationId, updated);
-    return updated;
+    return this.withLock(id, async () => {
+      const app = await this.requireApplication(id); this.assertEditable(app);
+      if (!Number.isInteger(step) || step < 1 || step > 4) throw httpError(400, 'Invalid wizard step');
+      return this.save(app, { currentStep: step });
+    });
+  }
+  static async submitApplication(id) {
+    return this.withLock(id, async () => {
+      const app = await this.requireApplication(id);
+      if (app.submittedAt || app.status === 'submitted') return app;
+      this.assertEditable(app);
+      const report = app.validationReport;
+      if (!report || report.version !== VALIDATION_VERSION || report.validationDay !== utcDay()) throw httpError(409, 'Run pre-validation again before submitting.');
+      const readiness = calculateValidationReadiness(app.documents, report.consistency, report.issues);
+      if (!readiness.ready || app.validationStatus !== 'passed') throw httpError(409, 'Resolve all issues and manual review items, then revalidate before submitting.');
+      for (const doc of app.documents) {
+        let unchanged = false;
+        try { unchanged = doc.storedName && StorageService.fingerprint(doc.storedName) === doc.extraction?.fingerprint; } catch { /* Missing or changed files require a fresh report. */ }
+        if (!unchanged) throw httpError(409, 'A stored document changed or is unavailable. Replace it and revalidate.');
+      }
+      const now = new Date();
+      return this.save(app, { ...initializeWorkflow(app, now), integration: governmentAdapter.submitApplication(app), status: 'submitted', submittedAt: now, currentStep: 4 });
+    });
   }
 }

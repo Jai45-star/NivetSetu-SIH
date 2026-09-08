@@ -19,6 +19,8 @@ import { DocumentRow } from '../../components/applications/DocumentRow';
 import { ReadinessCard } from '../../components/applications/ReadinessCard';
 import { Card } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
+import { ValidationReport } from '../../components/applications/ValidationReport';
+import { ApplicationTracking } from './ApplicationTracking';
 import { StatusBadge } from '../../components/shared/StatusBadge';
 
 export function ApplicationWizard() {
@@ -32,7 +34,9 @@ export function ApplicationWizard() {
   const [saveFeedback, setSaveFeedback] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadingDocId, setUploadingDocId] = useState(null);
-  const [proceedSuccess, setProceedSuccess] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [focusDocument, setFocusDocument] = useState(null);
+  const draftPromise = useRef(null);
 
   // Initialize or load draft
   useEffect(() => {
@@ -56,9 +60,8 @@ export function ApplicationWizard() {
           }
         } else {
           // Creating fresh draft
-          const newDraft = await ApplicationApi.createApplication({
-            unitName: 'New Industrial Unit',
-          });
+          if (!draftPromise.current) draftPromise.current = ApplicationApi.createApplication({ unitName: 'New Industrial Unit' });
+          const newDraft = await draftPromise.current;
           if (isMounted) {
             loadedIdRef.current = newDraft.applicationId;
             setApplication(newDraft);
@@ -87,8 +90,8 @@ export function ApplicationWizard() {
       const updated = await ApplicationApi.updateCurrentStep(application.applicationId, newStep);
       setApplication(updated);
       showSaveNotice();
-    } catch {
-      setApplication(prev => ({ ...prev, currentStep: newStep }));
+    } catch (err) {
+      setError(err.message || 'Could not save this step. Please retry.');
     }
   };
 
@@ -134,6 +137,44 @@ export function ApplicationWizard() {
     }
   };
 
+  const busy = validating || isSubmitting || !!uploadingDocId;
+  useEffect(() => {
+    if (focusDocument && application?.currentStep === 3) {
+      const element = document.getElementById('document-' + focusDocument);
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      element?.focus({ preventScroll: true });
+    }
+  }, [focusDocument, application?.currentStep]);
+  const handleValidation = async (documentId = null, force = false) => {
+    setError(null); setValidating(true);
+    try {
+      const updated = await ApplicationApi.validate(application.applicationId, { documentId, force });
+      setApplication(updated);
+      showSaveNotice('Pre-validation report saved');
+    } catch (err) { setError(err.message); }
+    finally { setValidating(false); }
+  };
+  const fixDocument = async (documentId) => {
+    setFocusDocument(documentId);
+    await handleStepChange(documentId ? 3 : 1);
+    if (documentId) document.getElementById('document-' + documentId)?.focus();
+  };
+  const showIssues = () => {
+    const element = document.getElementById('validation-issues');
+    element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    element?.focus({ preventScroll: true });
+  };
+  const handleSubmitApplication = async () => {
+    setError(null); setIsSubmitting(true);
+    try {
+      const updated = await ApplicationApi.submit(application.applicationId);
+      setApplication(updated);
+      navigate('/entrepreneur/applications/' + updated.applicationId, { replace: true });
+      window.scrollTo(0, 0);
+    } catch (err) { setError(err.message); }
+    finally { setIsSubmitting(false); }
+  };
+
   if (loading) {
     return (
       <div className="wizard-loading-state">
@@ -156,18 +197,25 @@ export function ApplicationWizard() {
     );
   }
 
+  if (application && !['draft', 'ready_for_validation'].includes(application.status)) return <ApplicationTracking application={application}/>;
   const currentStep = application?.currentStep || 1;
   const businessProfile = application?.businessProfile || {};
   const approvals = application?.requiredApprovals || [];
   const documents = application?.documents || [];
-  const readinessScore = application?.readinessScore || 0;
+  const report = application?.validationReport;
+  const readonly = !['draft', 'ready_for_validation'].includes(application.status);
+  const reportCurrent = report?.validationDay === new Date().toISOString().slice(0, 10);
+  const readinessScore = application?.completenessScore || 0;
 
   const totalDocs = documents.length;
-  const uploadedDocs = documents.filter(d => d.status === 'uploaded' || d.status === 'valid').length;
+  const uploadedDocs = documents.filter(d => d.storedName).length;
   const allDocsUploaded = totalDocs > 0 && uploadedDocs === totalDocs;
 
   return (
-    <div className="application-wizard">
+    <div className="application-wizard" aria-busy={busy}>
+      {error && <p className="validation-error-banner" role="alert">{error}</p>}
+      {busy && <p className="validation-progress" role="status">Checking your application... Reading documents, checking information and preparing your report. Please keep this page open.</p>}
+      <fieldset className="wizard-interaction" disabled={busy || readonly}>
       {/* Top Wizard Bar */}
       <div className="wizard-top-bar">
         <div className="wizard-title-col">
@@ -315,6 +363,7 @@ export function ApplicationWizard() {
                   onUpload={handleDocumentUpload}
                   onRemove={handleDocumentRemove}
                   isUploading={uploadingDocId === doc.documentId}
+                  busy={busy} report={report} onRecheck={handleValidation}
                 />
               ))}
             </div>
@@ -332,17 +381,19 @@ export function ApplicationWizard() {
           <aside className="step-side-panel">
             <ReadinessCard
               documents={documents}
-              readinessScore={readinessScore}
+              report={report} onFix={showIssues} processing={busy}
             />
           </aside>
         </div>
       )}
 
-      {/* STEP 4: Review & Submit */}
+      {currentStep === 3 && <ValidationReport report={report} onFix={fixDocument}/>}
+
+      {/* STEP 4: Review & Validation */}
       {currentStep === 4 && (
         <div className="wizard-step-content step-4-container">
           <div className="step-header">
-            <h2>Review Application Draft</h2>
+            <h2>Review & Validation</h2>
             <p>Verify all sections before proceeding to validation.</p>
           </div>
 
@@ -425,7 +476,7 @@ export function ApplicationWizard() {
                     </span>
                   ) : (
                     <span className="text-success flex-center">
-                      <CheckCircle2 size={14} /> All statutory documents uploaded and ready.
+                      <CheckCircle2 size={14} /> All required files uploaded. Pre-validation is a separate check.
                     </span>
                   )}
                 </div>
@@ -433,35 +484,13 @@ export function ApplicationWizard() {
             </Card>
           </div>
 
-          {/* Submission boundary banner */}
           <Card className="submission-boundary-card">
-            <div className="boundary-left">
-              <h4>First-Time-Right Intelligent Validation</h4>
-              <p>
-                In Phase 3, NiveshSetu will automatically run cross-document verification, entity name consistency, and fire/layout compliance checks before submitting to government departments.
-              </p>
-            </div>
-
-            <div className="boundary-action">
-              <Button
-                size="default"
-                disabled={!allDocsUploaded}
-                onClick={() => setProceedSuccess(true)}
-              >
-                Proceed to Validation <ArrowRight size={16} />
-              </Button>
-            </div>
+            <div className="boundary-left"><h4>First-Time-Right Pre-Validation</h4><p>Check file quality, detected dates and company-name consistency. These checks do not establish legal or engineering validity.</p></div>
+            <Button onClick={() => handleValidation(null, true)} disabled={busy}>{report ? 'Revalidate Application' : 'Proceed to Validation'} <ArrowRight size={16}/></Button>
           </Card>
-
-          {proceedSuccess && (
-            <div className="proceed-success-banner">
-              <CheckCircle2 size={20} className="text-success" />
-              <div>
-                <strong>Application Draft Completed!</strong>
-                <p>All documents and business parameters saved in MongoDB. Ready for Phase 3 Smart Validation.</p>
-              </div>
-            </div>
-          )}
+          {!reportCurrent && report && <p className="validation-error-banner">This report is from an earlier day. Revalidate before submitting.</p>}
+          <div className="validation-review-grid"><ValidationReport report={report} onFix={fixDocument}/><aside><ReadinessCard documents={documents} report={report} onFix={showIssues} processing={busy}/></aside></div>
+          {report && <Card className="prototype-submit"><div><h3>{report.readiness.ready ? 'Ready for your next step' : 'Resolve issues before submitting'}</h3><p>Submission is saved in this prototype only. Final scrutiny and approval remain with the authorized government department.</p></div><Button onClick={handleSubmitApplication} disabled={!report.readiness.ready || !reportCurrent || busy}>Submit Application <ArrowRight size={16}/></Button></Card>}
 
           <div className="step-nav-bar mt-6">
             <Button variant="outline" onClick={() => handleStepChange(3)}>
@@ -473,6 +502,8 @@ export function ApplicationWizard() {
           </div>
         </div>
       )}
+      </fieldset>
     </div>
   );
 }
+

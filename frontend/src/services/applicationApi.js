@@ -1,6 +1,18 @@
 const API_BASE = '/api/applications';
 
 export class ApplicationApi {
+  static async validate(id, { documentId, force = false } = {}) {
+    const endpoint = documentId ? API_BASE + '/' + encodeURIComponent(id) + '/documents/' + encodeURIComponent(documentId) + '/validate' : API_BASE + '/' + encodeURIComponent(id) + '/validate';
+    return this.postAction(endpoint, { force });
+  }
+  static async submit(id) { return this.postAction(API_BASE + '/' + encodeURIComponent(id) + '/submit'); }
+  static async postAction(url, body = {}) {
+    const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.message || 'Request failed. Please retry.');
+    return payload.data;
+  }
+
   static async getApplications(status = null) {
     const url = status && status !== 'all' ? `${API_BASE}?status=${status}` : API_BASE;
     const res = await fetch(url, {

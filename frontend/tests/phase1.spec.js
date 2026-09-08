@@ -19,7 +19,7 @@ test('role selectors, routes, refresh, active links, notifications and 404', asy
  }
  await page.goto('/officer');
  await page.getByRole('button', { name: 'Notifications', exact: true }).click();
- await expect(page.getByText('No live notifications in this demo.')).toBeVisible();
+ await expect(page.getByText('In-app prototype updates')).toBeVisible();
  await page.getByRole('link', { name: 'Logout' }).click();
  await page.getByRole('link', { name: 'Login as Government Officer', exact: true }).click();
  await expect(page).toHaveURL(/\/officer$/);
@@ -62,3 +62,4 @@ for (const width of [1440, 1280, 1024, 768, 430, 390]) {
   }
  });
 }
+

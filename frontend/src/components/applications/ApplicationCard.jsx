@@ -32,6 +32,8 @@ export function ApplicationCard({ application }) {
     else progressPercent = 90;
   } else if (status === 'ready_for_validation') {
     progressPercent = 90;
+  } else if (status === 'submitted') {
+    progressPercent = 100;
   } else if (status === 'under_review') {
     progressPercent = 70;
   } else if (status === 'at_risk') {
@@ -41,7 +43,7 @@ export function ApplicationCard({ application }) {
   }
 
   const isDraft = status === 'draft' || status === 'ready_for_validation';
-  const actionText = isDraft ? 'Continue' : 'Track';
+  const actionText = isDraft ? 'Continue' : status === 'submitted' ? 'View' : 'Track';
   const actionUrl = isDraft
     ? `/entrepreneur/applications/${applicationId}`
     : `/entrepreneur/applications/${applicationId}`;

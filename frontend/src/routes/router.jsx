@@ -4,7 +4,7 @@ import { AppShell } from '../components/layout/AppShell';
 import { EntrepreneurDashboard } from '../pages/entrepreneur/Dashboard';
 import { EntrepreneurApplications } from '../pages/entrepreneur/Applications';
 import { ApplicationWizard } from '../pages/entrepreneur/ApplicationWizard';
-import { OfficerDashboard } from '../pages/officer/Dashboard';
+import { OfficerWorkspace, ApplicationReview } from '../pages/officer/Workspace';
 import { Placeholder } from '../pages/Placeholder';
 import { NotFound } from '../pages/NotFound';
 import { navigation } from '../data/navigation';
@@ -53,10 +53,15 @@ export const router = createBrowserRouter([
     children: [
       {
         index: true,
-        element: <OfficerDashboard />,
+        element: <OfficerWorkspace />,
       },
+      { path: 'applications', element: <OfficerWorkspace mode="applications" /> },
+      { path: 'applications/:id', element: <ApplicationReview /> },
+      { path: 'review', element: <OfficerWorkspace mode="review" /> },
+      { path: 'sla', element: <OfficerWorkspace mode="sla" /> },
+      { path: 'reports', element: <OfficerWorkspace mode="reports" /> },
       ...navigation.officer
-        .filter(item => item.path)
+        .filter(item => item.path && !['applications', 'review', 'sla', 'reports'].includes(item.path))
         .map(item => ({
           path: item.path,
           element: <Placeholder title={item.title} role="officer" />,

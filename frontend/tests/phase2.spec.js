@@ -40,7 +40,7 @@ test.describe('Phase 2 Entrepreneur Application Journey', () => {
 
     // 3. Start New Application
     await page.getByRole('link', { name: 'Start New Application' }).first().click();
-    await expect(page).toHaveURL(/\/entrepreneur\/applications\/(new|NS-2026-\d+)/);
+    await expect(page).toHaveURL(/\/entrepreneur\/applications\/(new|NS-2026-[A-F0-9]+)/);
     await expect(page.getByRole('heading', { name: 'Business Profile' })).toBeVisible();
 
     // 4. Fill Business Profile (Step 1)
@@ -86,7 +86,7 @@ test.describe('Phase 2 Entrepreneur Application Journey', () => {
     // 8. Upload first document
     const firstInput = page.locator('.doc-missing input[type="file"]').first();
     await firstInput.setInputFiles(samplePdf);
-    await expect(page.locator('.status-pill-uploaded').first()).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('.doc-uploaded .doc-file-info').first()).toBeVisible({ timeout: 10000 });
 
     // 9. Navigate away to Applications listing and return
     await page.goto('/entrepreneur/applications');
@@ -95,7 +95,7 @@ test.describe('Phase 2 Entrepreneur Application Journey', () => {
 
     // Click Continue on the draft
     await page.getByRole('link', { name: /Continue/ }).first().click();
-    await expect(page).toHaveURL(/\/entrepreneur\/applications\/NS-2026-\d+/);
+    await expect(page).toHaveURL(/\/entrepreneur\/applications\/NS-2026-[A-F0-9]+/);
 
     // Navigate to Step 3 Documents
     await page.getByRole('button', { name: /Upload Documents/ }).click();
@@ -105,24 +105,25 @@ test.describe('Phase 2 Entrepreneur Application Journey', () => {
     while (await page.locator('.doc-missing input[type="file"]').count() > 0) {
       const missingInput = page.locator('.doc-missing input[type="file"]').first();
       await missingInput.setInputFiles(samplePdf);
-      await page.waitForTimeout(600);
+      await expect(page.getByText('Checking your application...', { exact: false }).first()).toHaveCount(0, { timeout: 15000 });
     }
 
-    // Verify 100% Application Readiness reached
-    await expect(page.locator('.radial-text').getByText('100%')).toBeVisible();
+    // Completeness is independent of validation readiness
+    await expect(page.locator('.readiness-doc-count')).toContainText('6 / 6');
 
     // 10. Continue to Review (Step 4)
     await page.getByRole('button', { name: /Continue to Review/ }).click();
-    await expect(page.getByRole('heading', { name: 'Review Application Draft' })).toBeVisible();
-    await expect(page.getByText('First-Time-Right Intelligent Validation')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Review & Validation' })).toBeVisible();
+    await expect(page.getByText('First-Time-Right Pre-Validation')).toBeVisible();
 
     // Verify Proceed to Validation button is clickable
-    const proceedBtn = page.getByRole('button', { name: /Proceed to Validation/ });
+    const proceedBtn = page.getByRole('button', { name: /Proceed to Validation|Revalidate Application/ });
     await expect(proceedBtn).toBeEnabled();
     await proceedBtn.click();
 
-    // Verify success banner appears
-    await expect(page.getByText('Application Draft Completed!')).toBeVisible();
+    // Deliberately corrupt PDFs require human review and cannot be submitted
+    await expect(page.getByRole('heading', { name: /^Manual Review/, level: 3 })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Submit Application', exact: true })).toBeDisabled();
 
     expect(errors).toEqual([]);
   });

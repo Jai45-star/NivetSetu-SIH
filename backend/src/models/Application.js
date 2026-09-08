@@ -1,5 +1,11 @@
 import mongoose from 'mongoose';
 
+const IssueSchema = new mongoose.Schema({
+  code: String, severity: { type: String, enum: ['info', 'warning', 'error', 'manual_review'] },
+  documentType: String, documentId: String, documentName: String, title: String, message: String,
+  field: String, detectedValue: String, expected: String, confidence: String, action: String, referenceDocument: String,
+}, { _id: false });
+
 const DocumentSchema = new mongoose.Schema({
   documentId: { type: String, required: true },
   documentType: { type: String, required: true },
@@ -18,6 +24,14 @@ const DocumentSchema = new mongoose.Schema({
   mimeType: { type: String },
   size: { type: Number },
   uploadedAt: { type: Date },
+  extraction: {
+    type: new mongoose.Schema({ status: String, textAvailable: Boolean, confidence: String, method: String,
+      extractedFields: mongoose.Schema.Types.Mixed, fingerprint: String, version: String }, { _id: false }), default: null,
+  },
+  validation: {
+    type: new mongoose.Schema({ status: { type: String, enum: ['not_uploaded', 'processing', 'valid', 'warning', 'invalid', 'manual_review'] },
+      validatedAt: Date, issues: [IssueSchema], version: String }, { _id: false }), default: null,
+  },
 }, { _id: false });
 
 const RequiredApprovalSchema = new mongoose.Schema({
@@ -66,9 +80,27 @@ const ApplicationSchema = new mongoose.Schema({
   },
   requiredApprovals: [RequiredApprovalSchema],
   documents: [DocumentSchema],
+  validationStatus: { type: String, enum: ['not_validated', 'processing', 'passed', 'issues'], default: 'not_validated' },
+  validationReport: { type: mongoose.Schema.Types.Mixed, default: null },
+  validatedAt: Date,
+  completenessScore: { type: Number, default: 0, min: 0, max: 100 },
+  readinessLabel: { type: String, default: 'Not Ready' },
+  submittedAt: Date,
+  currentStage: String,
+  workflow: mongoose.Schema.Types.Mixed,
+  workflowEvents: [mongoose.Schema.Types.Mixed],
+  queries: [mongoose.Schema.Types.Mixed],
+  queryCount: { type: Number, default: 0 },
+  internalNotes: [mongoose.Schema.Types.Mixed],
+  assignedOfficer: mongoose.Schema.Types.Mixed,
+  integration: mongoose.Schema.Types.Mixed,
+  rejection: mongoose.Schema.Types.Mixed,
+  decidedAt: Date,
+  legacyWorkflow: Boolean,
+  preValidationPassedAtSubmission: Boolean,
   status: {
     type: String,
-    enum: ['draft', 'ready_for_validation', 'submitted', 'under_review', 'approved', 'at_risk'],
+    enum: ['draft', 'ready_for_validation', 'submitted', 'under_review', 'approved', 'at_risk', 'action_required', 'rejected'],
     default: 'draft',
     index: true,
   },

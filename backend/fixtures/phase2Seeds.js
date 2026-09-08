@@ -1,0 +1,55 @@
+export const SHOWCASE_SEEDS = [
+  {
+    applicationId: 'NS-DEMO-001',
+    userId: 'demo-entrepreneur-001',
+    unitName: 'Food Processing Unit',
+    businessProfile: {
+      industryType: 'Food Processing',
+      location: 'Pune, Maharashtra',
+      investmentRange: '₹1 – ₹5 Crore',
+      employeeRange: '50 – 200',
+      businessStage: 'New Unit',
+      description: 'Manufacturing of packaged organic fruit snacks and cold-pressed juices.',
+    },
+    status: 'draft',
+    currentStep: 3,
+    createdAt: new Date('2026-08-12T09:30:00Z'),
+    updatedAt: new Date('2026-08-12T11:45:00Z'),
+  },
+  {
+    applicationId: 'NS-DEMO-002',
+    userId: 'demo-entrepreneur-001',
+    unitName: 'Textile Manufacturing Unit',
+    businessProfile: {
+      industryType: 'Textile Manufacturing',
+      location: 'Pune, Maharashtra',
+      investmentRange: '₹5 – ₹25 Crore',
+      employeeRange: '201 – 500',
+      businessStage: 'Expansion',
+      description: 'High-speed synthetic yarn spinning and automated weaving facility.',
+    },
+    status: 'under_review',
+    currentStep: 4,
+    createdAt: new Date('2026-08-05T08:00:00Z'),
+    updatedAt: new Date('2026-08-06T14:20:00Z'),
+  },
+  {
+    applicationId: 'NS-DEMO-003',
+    userId: 'demo-entrepreneur-001',
+    unitName: 'Chemical Unit',
+    businessProfile: {
+      industryType: 'Chemical Manufacturing',
+      location: 'Thane, Maharashtra',
+      investmentRange: '₹25 – ₹100 Crore',
+      employeeRange: '50 – 200',
+      businessStage: 'Existing Unit',
+      description: 'Speciality intermediate polymer production facility in MIDC industrial belt.',
+    },
+    status: 'at_risk',
+    currentStep: 4,
+    createdAt: new Date('2026-07-28T10:15:00Z'),
+    updatedAt: new Date('2026-08-01T16:00:00Z'),
+  },
+];
+
+

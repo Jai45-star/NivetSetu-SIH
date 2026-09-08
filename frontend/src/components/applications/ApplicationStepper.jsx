@@ -4,7 +4,7 @@ const STEPS = [
   { step: 1, title: 'Business Profile', label: '1. Business Profile' },
   { step: 2, title: 'Required Approvals', label: '2. Required Approvals' },
   { step: 3, title: 'Upload Documents', label: '3. Upload Documents' },
-  { step: 4, title: 'Review & Submit', label: '4. Review & Submit' },
+  { step: 4, title: 'Review & Validation', label: '4. Review & Validation' },
 ];
 
 export function ApplicationStepper({ currentStep = 1, onStepClick = null, maxCompletedStep = 1 }) {
@@ -25,6 +25,7 @@ export function ApplicationStepper({ currentStep = 1, onStepClick = null, maxCom
               <button
                 type="button"
                 className="stepper-step"
+                aria-label={title}
                 disabled={!isClickable}
                 onClick={() => isClickable && onStepClick(step)}
               >

@@ -30,6 +30,7 @@ export class StorageService {
     return filename
       .replace(/[^a-zA-Z0-9._-]/g, '_')
       .replace(/_{2,}/g, '_')
+      .replace(/\.{2,}/g, '_')
       .slice(0, 100);
   }
 
@@ -41,13 +42,22 @@ export class StorageService {
   }
 
   static getFilePath(storedName) {
-    const safeName = path.basename(storedName);
-    return path.join(UPLOAD_DIR, safeName);
+    if (typeof storedName !== 'string' || !storedName || storedName !== path.basename(storedName) || /[\\/:]/.test(storedName) || storedName.includes('..')) throw new Error('Invalid stored filename');
+    const fullPath = path.resolve(UPLOAD_DIR, storedName);
+    if (path.dirname(fullPath) !== UPLOAD_DIR) throw new Error('Invalid storage path');
+    if (fs.existsSync(fullPath) && fs.lstatSync(fullPath).isSymbolicLink()) throw new Error('Invalid storage file');
+    return fullPath;
   }
 
   static fileExists(storedName) {
     const fullPath = this.getFilePath(storedName);
     return fs.existsSync(fullPath);
+  }
+
+  static fingerprint(storedName) {
+    const stat = fs.lstatSync(this.getFilePath(storedName));
+    if (!stat.isFile()) throw new Error('Invalid storage file');
+    return `${storedName}:${stat.size}:${stat.mtimeMs}`;
   }
 
   static deleteFile(storedName) {

@@ -50,7 +50,7 @@ export function EntrepreneurDashboard() {
   // Compute live metrics
   const total = applications.length;
   const draftCount = applications.filter(a => a.status === 'draft' || a.status === 'ready_for_validation').length;
-  const reviewCount = applications.filter(a => a.status === 'under_review' || a.status === 'submitted').length;
+  const reviewCount = applications.filter(a => a.status === 'under_review').length;
   const approvedCount = applications.filter(a => a.status === 'approved').length;
   const atRiskCount = applications.filter(a => a.status === 'at_risk').length;
 
@@ -126,7 +126,7 @@ export function EntrepreneurDashboard() {
       <div className="workspace-note">
         <Info size={19} />
         <p>
-          <strong>A foundation for First-Time-Right applications.</strong> Drafts and business profiles are saved to MongoDB with deterministic approval checklists. Smart validation arrives in Phase 3.
+          <strong>A foundation for First-Time-Right applications.</strong> Prepare your checklist, review document issues and revalidate before prototype submission. Final decisions remain with the authorized department.
         </p>
       </div>
 
